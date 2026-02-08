@@ -156,7 +156,8 @@ def extract_text_from_docx(docx_file):
     return "\n".join([p.text for p in doc.paragraphs if p.text.strip() != ""])
 
 # === Claude Feedback ===
-def get_resume_feedback_from_claude(resume_text):
+# === Claude Feedback (FIXED) ===
+def get_resume_feedback_from_claude(resume_text: str) -> str:
     system_prompt = "You're a career coach reviewing resumes for clarity, impact, and relevance."
     user_prompt = f"""Evaluate the following resume:
 
@@ -168,14 +169,36 @@ Give me:
 3. Suggestions for tailoring to roles like: data analyst, product manager, ML engineer.
 Return your response in a clear bullet list.
 """
-    response = client_claude.messages.create(
-        model="claude-3-5-sonnet-20241022",
-        system=system_prompt,
-        max_tokens=1000,
-        temperature=0.4,
-        messages=[{"role": "user", "content": user_prompt}]
-    )
-    return response.content[0].text
+
+    # Use a CURRENT Claude API model ID (alias), with a snapshot fallback.
+    # Per Anthropic docs: claude-sonnet-4-5 (alias) / claude-sonnet-4-5-20250929 (snapshot) / claude-opus-4-6
+    model_candidates = [
+        st.secrets.get("ANTHROPIC_MODEL", "claude-sonnet-4-5"),
+        "claude-sonnet-4-5-20250929",
+        "claude-opus-4-6",
+    ]
+
+    last_err = None
+    for model_name in model_candidates:
+        try:
+            response = client_claude.messages.create(
+                model=model_name,
+                system=system_prompt,
+                max_tokens=1000,
+                temperature=0.4,
+                messages=[{"role": "user", "content": user_prompt}],
+            )
+            # response.content is typically a list of content blocks; take text blocks
+            return "".join(
+                block.text for block in response.content if getattr(block, "type", None) == "text"
+            ).strip()
+        except anthropic.NotFoundError as e:
+            last_err = e
+            continue
+
+    # If we got here, every candidate failed
+    raise last_err
+
 
 # === STREAMLIT UI ===
 st.set_page_config(page_title="Agentic Resume Assistant", layout="centered")
